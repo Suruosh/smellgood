@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useCallback, useSyncExternalStore } from 'react';
 import { Product, CartItem } from '@/lib/types';
 
 interface CartContextType {
@@ -13,34 +13,60 @@ interface CartContextType {
   total: number;
 }
 
+const STORAGE_KEY = 'smellgood-cart';
+
+// Simple external store for cart items
+let cartItems: CartItem[] = [];
+let listeners: Array<() => void> = [];
+
+function emitChange() {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function subscribe(listener: () => void) {
+  listeners = [...listeners, listener];
+  return () => {
+    listeners = listeners.filter((l) => l !== listener);
+  };
+}
+
+function getSnapshot(): CartItem[] {
+  return cartItems;
+}
+
+function getServerSnapshot(): CartItem[] {
+  return [];
+}
+
+// Initialize from localStorage on the client
+if (typeof window !== 'undefined') {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      cartItems = JSON.parse(stored);
+    }
+  } catch {
+    // Invalid data, start fresh
+  }
+}
+
+function setCartItems(updater: (prev: CartItem[]) => CartItem[]) {
+  cartItems = updater(cartItems);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cartItems));
+  }
+  emitChange();
+}
+
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  // Load cart from localStorage
-  useEffect(() => {
-    const stored = localStorage.getItem('smellgood-cart');
-    if (stored) {
-      try {
-        setItems(JSON.parse(stored));
-      } catch {
-        // Invalid data, start fresh
-      }
-    }
-    setIsLoaded(true);
-  }, []);
-
-  // Save cart to localStorage
-  useEffect(() => {
-    if (isLoaded) {
-      localStorage.setItem('smellgood-cart', JSON.stringify(items));
-    }
-  }, [items, isLoaded]);
+  const items = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const addItem = useCallback((product: Product, quantity = 1) => {
-    setItems((prev) => {
+    setCartItems((prev) => {
       const existing = prev.find((item) => item.product.id === product.id);
       if (existing) {
         return prev.map((item) =>
@@ -54,15 +80,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const removeItem = useCallback((productId: string) => {
-    setItems((prev) => prev.filter((item) => item.product.id !== productId));
+    setCartItems((prev) => prev.filter((item) => item.product.id !== productId));
   }, []);
 
   const updateQuantity = useCallback((productId: string, quantity: number) => {
     if (quantity <= 0) {
-      setItems((prev) => prev.filter((item) => item.product.id !== productId));
+      setCartItems((prev) => prev.filter((item) => item.product.id !== productId));
       return;
     }
-    setItems((prev) =>
+    setCartItems((prev) =>
       prev.map((item) =>
         item.product.id === productId ? { ...item, quantity } : item,
       ),
@@ -70,7 +96,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clearCart = useCallback(() => {
-    setItems([]);
+    setCartItems(() => []);
   }, []);
 
   const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
