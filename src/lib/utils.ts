@@ -17,5 +17,6 @@ export function slugify(text: string): string {
 }
 
 export function getDiscountPercent(price: number, originalPrice: number): number {
+  if (originalPrice <= 0) return 0;
   return Math.round(((originalPrice - price) / originalPrice) * 100);
 }
